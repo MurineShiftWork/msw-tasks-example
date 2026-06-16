@@ -1,0 +1,5 @@
+n_trials: 10
+trial_duration: 2.0
+iti_duration: 1.0
+barcode_channel: 1
+barcode_interval_s: 30
