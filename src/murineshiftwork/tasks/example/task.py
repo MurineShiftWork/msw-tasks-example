@@ -9,8 +9,6 @@ import logging
 import time
 
 import numpy as np
-from pybpodapi.protocol import Bpod, StateMachine
-
 from murineshiftwork.hardware.bpod import BpodFactory
 from murineshiftwork.logic.barcode import (
     BarcodeTTL,
@@ -20,6 +18,7 @@ from murineshiftwork.logic.barcode import (
 from murineshiftwork.logic.io import save_trial_data
 from murineshiftwork.logic.task_process import TaskRunner
 from murineshiftwork.namespace import msw_file
+from pybpodapi.protocol import Bpod, StateMachine
 
 
 class Task(TaskRunner):
@@ -86,9 +85,7 @@ class Task(TaskRunner):
             }
             save_trial_data(
                 data=trial_data,
-                file_path=msw_file(
-                    self.session_paths["session_file_path"], "df.jsonl"
-                ),
+                file_path=msw_file(self.session_paths["session_file_path"], "df.jsonl"),
             )
             logging.info(
                 "Trial %d/%d complete. dummy_value=%.4f",
