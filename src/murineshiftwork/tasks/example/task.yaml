@@ -1,3 +1,6 @@
+session_type: example
+version: 1
+
 n_trials: 10
 trial_duration: 2.0
 iti_duration: 1.0
