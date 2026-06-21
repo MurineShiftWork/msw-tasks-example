@@ -3,6 +3,9 @@
 Copy this file to start a new task. The run_task() function is the entry point
 called by the MSW CLI. The Task class is a TaskRunner subclass that owns the
 state machine loop.
+
+See ``hook.py`` in this package for a worked example of a pre/post session
+hook and how to register it from a setup or task YAML.
 """
 
 import logging

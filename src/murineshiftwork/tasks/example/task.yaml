@@ -6,3 +6,8 @@ trial_duration: 2.0
 iti_duration: 1.0
 barcode_channel: 1
 barcode_interval_s: 30
+
+# Optional session hooks (see hook.py). Uncomment to run ExampleHook around
+# this task. Setup-YAML hooks: pre_task/post_task run for every task on the rig.
+# HOOKS_PRE_TASK:  ["murineshiftwork.tasks.example.hook.ExampleHook"]
+# HOOKS_POST_TASK: ["murineshiftwork.tasks.example.hook.ExampleHook"]
