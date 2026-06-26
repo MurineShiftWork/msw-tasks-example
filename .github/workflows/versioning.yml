@@ -1,0 +1,35 @@
+name: Versioning
+
+# Bump + tag only (this package is not published). Mirrors the template's
+# versioning workflow without the release/publish dispatch.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    name: Bump and tag
+    runs-on: ubuntu-latest
+    if: "!startsWith(github.event.head_commit.message, 'bump:')"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - uses: astral-sh/setup-uv@v7
+      - name: Bump and tag
+        run: |
+          uvx --from commitizen cz bump --yes || EXIT=$?
+          if [ "${EXIT:-0}" -eq 21 ] || [ "${EXIT:-0}" -eq 6 ]; then
+            echo "No bumpable commits since last tag — nothing to do."
+            exit 0
+          fi
+          [ "${EXIT:-0}" -eq 0 ] || exit $EXIT
+          git push origin HEAD:main
+          git push origin "v$(cat VERSION)"
