@@ -1,0 +1,39 @@
+name: Release
+
+# Publish only. Triggered by a tag (hand-pushed tags publish directly) or by a
+# workflow_dispatch from versioning.yml (the automatic path, since a
+# GITHUB_TOKEN-pushed tag cannot trigger push:tags). Internal only: builds and
+# attaches artifacts to a GitHub release — no PyPI publish.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g. v0.1.2)'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  release:
+    name: Build and GitHub release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: "${{ github.event.inputs.tag || github.ref }}"
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+      - name: Build
+        run: uv build
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: "${{ github.event.inputs.tag || github.ref_name }}"
+          files: dist/*
+          generate_release_notes: false
