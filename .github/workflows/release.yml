@@ -1,9 +1,9 @@
 name: Release
 
-# Publish only. Triggered by a tag (hand-pushed tags publish directly) or by a
-# workflow_dispatch from versioning.yml (the automatic path, since a
-# GITHUB_TOKEN-pushed tag cannot trigger push:tags). Internal only: builds and
-# attaches artifacts to a GitHub release — no PyPI publish.
+# Publish only. Triggered by a tag pushed by versioning.yml with the CI App
+# token (or by hand), or by a workflow_dispatch from versioning.yml when it
+# fell back to GITHUB_TOKEN, whose tag push cannot trigger push:tags.
+# Internal only: builds and attaches artifacts to a GitHub release, no PyPI publish.
 on:
   push:
     tags: ['v*']
