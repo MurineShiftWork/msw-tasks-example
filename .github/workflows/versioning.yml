@@ -1,35 +1,82 @@
 name: Versioning
 
-# Bump + tag only (this package is not published). Mirrors the template's
-# versioning workflow without the release/publish dispatch.
+# Bump + tag only. Publishing is decoupled into release.yml, so a hand-pushed
+# tag publishes too and the release stays bound to the release.yml filename.
+#
+# Push identity:
+#   - With the org CI App secrets, the bump commit and tag are pushed by the
+#     App. It is the only bypass actor of the protected main, and its tag push
+#     fires release.yml's push:tags directly.
+#   - Without them it falls back to GITHUB_TOKEN, which only works on an
+#     unprotected main. A GITHUB_TOKEN tag push triggers no workflow, so
+#     release.yml is dispatched explicitly.
 on:
   push:
     branches: [main]
 
 permissions:
   contents: write
+  actions: write  # to dispatch release.yml on the fallback path
 
 jobs:
   version:
     name: Bump and tag
     runs-on: ubuntu-26.04
+    # Skip the bump the bot itself just pushed (avoids a loop).
     if: "!startsWith(github.event.head_commit.message, 'bump:')"
+    env:
+      HAS_CI_APP: ${{ secrets.MURINESHIFTWORK_CI_CLIENT_ID != '' }}
     steps:
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        if: env.HAS_CI_APP == 'true'
+        with:
+          client-id: ${{ secrets.MURINESHIFTWORK_CI_CLIENT_ID }}
+          private-key: ${{ secrets.MURINESHIFTWORK_CI_PRIVATE_KEY }}
+          permission-contents: write
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token || github.token }}
+
       - name: Configure git identity
+        env:
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ -n "$APP_SLUG" ]; then
+            BOT_UID=$(gh api "/users/${APP_SLUG}%5Bbot%5D" --jq .id)
+            git config user.name  "${APP_SLUG}[bot]"
+            git config user.email "${BOT_UID}+${APP_SLUG}[bot]@users.noreply.github.com"
+          else
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          fi
+
       - uses: astral-sh/setup-uv@v7
-      - name: Bump and tag
+        with:
+          python-version: "3.12"
+
+      - name: Bump, tag, push
+        id: bump
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
         run: |
           uvx --from commitizen cz bump --yes || EXIT=$?
           if [ "${EXIT:-0}" -eq 21 ] || [ "${EXIT:-0}" -eq 6 ]; then
-            echo "No bumpable commits since last tag — nothing to do."
+            echo "No bumpable commits since last tag, nothing to release."
             exit 0
           fi
-          [ "${EXIT:-0}" -eq 0 ] || exit $EXIT
+          [ "${EXIT:-0}" -eq 0 ] || exit "$EXIT"
+          VERSION="v$(cat VERSION)"
           git push origin HEAD:main
-          git push origin "v$(cat VERSION)"
+          git push origin "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "bumped=true"      >> "$GITHUB_OUTPUT"
+
+      - name: Trigger release (fallback without the CI App)
+        if: ${{ steps.bump.outputs.bumped == 'true' && steps.app-token.outputs.token == '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run release.yml -f tag="${{ steps.bump.outputs.version }}"
