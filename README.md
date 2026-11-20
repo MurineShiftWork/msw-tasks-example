@@ -2,7 +2,7 @@
 
 Minimal example task for [Murine Shift Work](https://github.com/MurineShiftWork/msw-core).
 
-Demonstrates the standard task structure: `Task(TaskRunner)` subclass, settings access from `task.yaml`, TTL barcode injection, and per-trial data saving via `save_trial_data()`.
+Demonstrates the standard task structure: `Task(TaskRunner)` subclass, settings access from `task.yaml`, TTL barcode injection, and per-trial records through `emit_trial()`, which the framework writes to `df.jsonl`.
 
 ## Install
 

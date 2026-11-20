@@ -11,101 +11,85 @@ hook and how to register it from a setup or task YAML.
 import logging
 import time
 
-import numpy as np
-from murineshiftwork.hardware.bpod import BpodFactory
 from murineshiftwork.logic.barcode import (
     BarcodeTTL,
     barcode_config_from_settings,
     inject_barcode_states,
 )
-from murineshiftwork.logic.io import save_trial_data
-from murineshiftwork.logic.task_process import TaskRunner
-from murineshiftwork.namespace import msw_file
-from pybpodapi.protocol import Bpod, StateMachine
+from murineshiftwork.logic.task_process import TaskProcess, TaskRunner
+from pybpodapi.protocol import Bpod
+from pybpodapi.state_machine import StateMachine
 
 
 class Task(TaskRunner):
-    def __init__(self, bpod: Bpod, **settings):
-        super().__init__(bpod=bpod, **settings)
+    """Fixed-length trials with a barcode at the start and every ``barcode_interval_s``.
 
-        # Access task settings (from task.yaml defaults, overridden by CLI -ts flags).
-        self.n_trials = int(settings.get("n_trials", 10))
-        self.trial_duration = float(settings.get("trial_duration", 2.0))
-        self.iti_duration = float(settings.get("iti_duration", 1.0))
+    The framework builds the Bpod connection and the session paths, and writes each
+    trial passed to ``emit_trial``; the task only builds and runs state machines.
+    """
 
-        # Print all settings so the user can verify what is active.
-        print("\n--- Example Task Settings ---")
-        for k, v in settings.items():
-            print(f"  {k}: {v}")
-        print("----------------------------\n")
+    def run(self) -> None:
+        # task.yaml values, with any CLI -ts overrides applied
+        settings = self.input_kwargs.get("settings.task.patched", {})
+        n_trials = int(settings.get("n_trials", 10))
+        trial_duration = float(settings.get("trial_duration", 2.0))
+        iti_duration = float(settings.get("iti_duration", 1.0))
+        bnc_channel = getattr(
+            self.bpod.OutputChannels, f"BNC{settings.get('barcode_channel', 1)}"
+        )
+        # barcode_bits / barcode_bit_duration_ms / ... keys, ttl-barcoder defaults
+        barcoder = BarcodeTTL(barcode_config_from_settings(settings))
+        trial_s = trial_duration + iti_duration
+        barcode_interval_s = float(settings.get("barcode_interval_s", 30))
+        barcode_every_n = max(1, round(barcode_interval_s / trial_s)) if trial_s else 1
 
-        # Barcode TTL for ephys alignment (optional but recommended).
-        barcode_cfg = barcode_config_from_settings(settings)
-        self.barcode = BarcodeTTL(**barcode_cfg) if barcode_cfg else None
-
-    def run(self):
-        logging.info("Example task: starting %d trials", self.n_trials)
-
-        for trial_n in range(self.n_trials):
-            if not self._running:
-                break
-
-            sma = StateMachine(self.bpod)
-
-            # Inject barcode at session start and every ~30 s.
-            if self.barcode and (trial_n == 0 or trial_n % 30 == 0):
-                inject_barcode_states(sma, self.barcode, next_state="trial_start")
-            else:
-                sma.add_state(
-                    state_name="trial_start",
-                    state_timer=self.trial_duration,
-                    state_change_conditions={"Tup": "iti"},
-                    output_actions=[],
+        logging.info("Example task: starting %d trials", n_trials)
+        trial_index = 0
+        while self.continue_task and trial_index < n_trials:
+            sma = StateMachine(bpod=self.bpod)
+            barcode_value = barcode_wall_time = None
+            if trial_index % barcode_every_n == 0:
+                # barcode for ephys/video alignment, then the trial
+                barcode_value, barcode_wall_time, timing = barcoder.prepare()
+                sma = inject_barcode_states(
+                    sma, timing, bnc_channel, last_state_name="trial_start"
                 )
-
             sma.add_state(
-                state_name="iti",
-                state_timer=self.iti_duration,
-                state_change_conditions={"Tup": "exit"},
+                state_name="trial_start",
+                state_timer=trial_duration,
+                state_change_conditions={Bpod.Events.Tup: "iti"},
                 output_actions=[],
             )
             sma.add_state(
-                state_name="exit",
-                state_timer=0,
-                state_change_conditions={},
+                state_name="iti",
+                state_timer=iti_duration,
+                state_change_conditions={Bpod.Events.Tup: "exit"},
                 output_actions=[],
             )
 
             self.bpod.send_state_machine(sma)
-            self.bpod.run_state_machine(sma)
+            if not self.bpod.run_state_machine(sma):
+                logging.warning("No data returned on trial %d: stopping", trial_index)
+                break
 
-            trial_data = {
-                "trial": trial_n,
-                "trial_duration": self.trial_duration,
-                "iti_duration": self.iti_duration,
-                "timestamp": time.time(),
-                "dummy_value": float(np.random.rand()),
+            trial = self.bpod.session.current_trial.export()
+            trial["info"] = {
+                "trial_index": trial_index,
+                "barcode_value": barcode_value,
+                "barcode_wall_time": barcode_wall_time,
             }
-            save_trial_data(
-                data=trial_data,
-                file_path=msw_file(self.session_paths["session_file_path"], "df.jsonl"),
-            )
-            logging.info(
-                "Trial %d/%d complete. dummy_value=%.4f",
-                trial_n + 1,
-                self.n_trials,
-                trial_data["dummy_value"],
-            )
+            self.emit_trial(trial)  # the framework writes df.jsonl
+            logging.info("Trial %d/%d complete", trial_index + 1, n_trials)
+            trial_index += 1
 
         logging.info("Example task: done.")
 
 
-def run_task(bpod_serial_port: str, data_path: str, **settings):
-    """Entry point called by the MSW CLI (msw run example)."""
-    bpod = BpodFactory(serial_port=bpod_serial_port).connect()
-    try:
-        task = Task(bpod=bpod, data_path=data_path, **settings)
-        task.start()
-        task.join()
-    finally:
-        bpod.close()
+def run_task(**kwargs):
+    """Entry point called by the MSW CLI (``msw run example``)."""
+    with TaskProcess(**kwargs) as tp:
+        while tp.is_running():
+            try:
+                time.sleep(1)
+            except KeyboardInterrupt:
+                tp.stop_task()
